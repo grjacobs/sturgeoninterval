@@ -1,0 +1,305 @@
+data {
+  # -------------------------------------------------
+  # Define targeted discrepancy functions for the data
+  # -------------------------------------------------
+  for (i in 1:nind1){
+    for (t in (f1[inds1[i]]+1):ff1[inds1[i]]){
+      y1zero[i,t] <- y1[inds1[i],t]==3
+      y1one[i,t] <- y1[inds1[i],t]==1
+    } # t
+    # Zeros per individual
+    n1.zero[i] <- sum(y1zero[i,(f1[inds1[i]]+1):ff1[inds1[i]]])
+    # Ones per individual
+    n1.one[i] <- sum(y1one[i,(f1[inds1[i]]+1):ff1[inds1[i]]])
+  }
+  for (i in 1:nind2){
+    for (t in f2[inds2[i]]:ff2[inds2[i]]){	  
+      y2zero[i,t] <- y2[inds2[i],t]==3
+      y2one[i,t] <- y2[inds2[i],t]==1
+    } # t
+    # Zeros per individual
+    n2.zero[i] <- sum(y2zero[i,f2[inds2[i]]:ff2[inds2[i]]])
+    # Ones per individual
+    n2.one[i] <- sum(y2one[i,f2[inds2[i]]:ff2[inds2[i]]])
+  } # i
+  for (i in 1:nind3){
+    for (t in f3[inds3[i]]:ff3[inds3[i]]){
+      y3zero[i,t] <- y3[inds3[i],t]==3
+      y3one[i,t] <- y3[inds3[i],t]==1
+    }
+    # Zeros per individual 
+    n3.zero[i] <- sum(y3zero[i,f3[inds3[i]]:ff3[inds3[i]]]) 
+    # Ones per individual
+    n3.one[i] <- sum(y3one[i,f3[inds3[i]]:ff3[inds3[i]]])
+  } # i
+  # Sum of zeros 
+  T1zero <- sum(n1.zero) 
+  T2zero <- sum(n2.zero) 
+  T3zero <- sum(n3.zero) 
+  # Sum of ones 
+  T1one <- sum(n1.one) 
+  T2one <- sum(n2.one) 
+  T3one <- sum(n3.one) 
+}
+
+model{ 
+  # -------------------------------------------------
+  # Priors and constraints
+  # -------------------------------------------------
+  # assign 
+  theta  ~ dbeta(3, 3)
+  for (i in 1:nind.g.na){ #female: G=0; male: G=1
+    G.prior[inds.g.na[i]] <- theta
+  }
+  for (i in 1:nind){
+    G[i] ~ dbern(G.prior[i])
+  }
+  # State transition and observation model coefficient priors
+  # use priors that are reasonably flat on the probability scale, when transformed
+  # for sd of 1.8, precision = 1/(1.8^2) = 0.3086
+  gamma0 ~ dnorm(0, 0.3086) #Priors for logit(phi) intercept
+  gamma1 ~ dnorm(0, 0.3086) #Priors for logit(phi) sex effect
+  for (u in 1:2){
+    beta0[u] ~ dnorm(0, 0.3086) #Priors for logit(psi) intercept
+    beta1[u] ~ dnorm(0, 0.3086) #Priors for logit(psi) sex effect 
+    beta2[u] ~ dnorm(0, 0.3086) #Priors for logit(psi) temperature covariate effect 
+    alpha0[u] ~ dnorm(0, 0.3086) #Priors for logit(p1) intercept
+    alpha1[u] ~ dnorm(0, 0.3086) #Priors for logit(p1) sex effect
+  }	
+  # Telemetry observation probability
+  for (u in 1:2){
+    for (c in 1:2){ #different p for 2 years radio tags were extant
+      p2[u,c] ~ dunif(0, 1)	
+    }
+    p3[u] ~ dunif(0, 1) 
+  }
+  # State assignment error
+  eps1 <- 1 # because of study design and location states, this is always 1
+  eps2 ~ dunif(0, 1)	# z=1 state assignment error 
+  eps3 ~ dunif(0, 1)	# z=1 state assignment error 
+  # -------------------------------------------------
+  # Logistic regressions predicting transition and observation parameters	 
+  # -------------------------------------------------
+  # for all individuals
+  for (i in 1:nind){ 
+    logit(phi[i]) <- gamma0 + gamma1 * G[i]
+  }
+  # for all occasions from which state transitions may be observed in the next year
+  for (u in 1:2){
+    for (i in 1:nind){ 
+      for (t in 1:(n.occasions-1)){
+        logit(psi[u,i,t]) <- beta0[u] + beta1[u] * G[i] + beta2[u] * X[t] 
+      }
+    }
+  }
+  # for every state, individual, and occasion from f1 to ff1 in setline dataset
+  for (u in 1:2){
+    for (i in 1:nind1){  
+      for (t in (f1[inds1[i]]+1):ff1[inds1[i]]){
+        logit(p1[u,i,(1+t-(f1[inds1[i]]+1))]) <- alpha0[u] + alpha1[u] * G[i]
+      }
+    }
+  }
+  # -------------------------------------------------
+  # Define state-transition and observation matrices
+  # -------------------------------------------------
+  for (i in 1:nind){  
+    # Define probabilities of state z(i,t+1) given z(i,t)
+    # indexing: matrix[to, from, individual, time]
+    for (t in f[i]:(n.occasions-1)){
+      A[1,1,i,t] <- phi[i] * (1-psi[1,i,t])	#psi[1,i,t]=psi21
+      A[2,1,i,t] <- phi[i] * psi[1,i,t]	
+      A[3,1,i,t] <- 1-phi[i]
+      A[1,2,i,t] <- phi[i] * psi[2,i,t]		#psi[2,i,t]=psi12
+      A[2,2,i,t] <- phi[i] * (1-psi[2,i,t])
+      A[3,2,i,t] <- 1-phi[i]
+      A[1,3,i,t] <- 0
+      A[2,3,i,t] <- 0
+      A[3,3,i,t] <- 1
+    } # t
+  } # i     
+  # -------------------------------------------------
+  # Define probabilities of y(k,i,t) given z(i,t)
+  # -------------------------------------------------
+  # Observation process k = 1
+  for (i in 1:nind1){  
+    for (t in (f1[inds1[i]]+1):ff1[inds1[i]]){ 
+      P1[1,1,i,t] <- 0 #p1[1,i,(1+t-(f1[inds1[i]]+1))] * (1-eps1) 	
+      P1[2,1,i,t] <- p1[1,i,(1+t-(f1[inds1[i]]+1))] * eps1 	 	
+      P1[3,1,i,t] <- 1-p1[1,i,(1+t-(f1[inds1[i]]+1))] 
+      P1[1,2,i,t] <- 0 
+      P1[2,2,i,t] <- p1[2,i,(1+t-(f1[inds1[i]]+1))]			
+      P1[3,2,i,t] <- 1-p1[2,i,(1+t-(f1[inds1[i]]+1))]
+      P1[1,3,i,t] <- 0
+      P1[2,3,i,t] <- 0
+      P1[3,3,i,t] <- 1
+    } # t
+  } # i
+  # Observation process k = 2	  	  
+  for (i in 1:nind2){  
+    for (t in f2[inds2[i]]:ff2[inds2[i]]){  
+      P2[1,1,i,t] <- p2[1, (1+t-f2[inds2[i]]) ]  * (1-eps2) 
+      P2[2,1,i,t] <- p2[1, (1+t-f2[inds2[i]]) ]  * eps2  
+      P2[3,1,i,t] <- 1- p2[1, (1+t-f2[inds2[i]]) ]  
+      P2[1,2,i,t] <- 0 
+      P2[2,2,i,t] <- p2[2, (1+t-f2[inds2[i]]) ]  
+      P2[3,2,i,t] <- 1- p2[2, (1+t- f2[inds2[i]]) ]  
+      P2[1,3,i,t] <- 0
+      P2[2,3,i,t] <- 0
+      P2[3,3,i,t] <- 1
+    } # t
+  } # i  
+  # Observation process k = 3
+  for (i in 1:nind3){  
+    for (t in f3[inds3[i]]:ff3[inds3[i]]){ 
+      P3[1,1,i,t] <- p3[1] * (1-eps3)
+      P3[2,1,i,t] <- p3[1] * eps3 
+      P3[3,1,i,t] <- 1-p3[1] 
+      P3[1,2,i,t] <- 0 
+      P3[2,2,i,t] <- p3[2] 
+      P3[3,2,i,t] <- 1-p3[2]
+      P3[1,3,i,t] <- 0
+      P3[2,3,i,t] <- 0
+      P3[3,3,i,t] <- 1
+    } # t
+  } # i
+  # -------------------------------------------------
+  # Likelihoods (and simulated datasets)
+  # -------------------------------------------------
+  for (i in 1:nind){
+    for (t in 1:f[i]){
+      # Define latent state at first capture
+      z[i,t] <- ifelse(f[i] == t, min_y_it[i,f[i]], 0)
+      z.sim[i,t] <- ifelse(f[i] == t, min_y_it[i,f[i]], 0)
+    } # t
+    for (t in (f[i]+1):n.occasions){
+      # State process: draw z(t) given z(t-1)
+      z[i,t] ~ dcat(A[,z[i,t-1], i, t-1])
+      z.sim[i,t] ~ dcat(A[,z.sim[i,t-1], i, t-1])
+    } # t
+  } # i
+  for (i in 1:nind1){
+    for (t in (f1[inds1[i]]+1):ff1[inds1[i]]){
+      # Physical Capture Observation process: draw y(t) given z(t)  
+      y1[inds1[i],t] ~ dcat(P1[,z[inds1[i],t], i, t])
+      y1.rep[inds1[i],t] ~ dcat(P1[,z[inds1[i],t], i, t])
+      y1.sim[inds1[i],t] ~ dcat(P1[,z.sim[inds1[i],t], i, t]) 
+      # Targeted discrepancy	  
+      y1.sim.zero[i,t] <- y1.sim[inds1[i],t]==3
+      y1.rep.zero[i,t] <- y1.rep[inds1[i],t]==3
+      #y1.sim.one[i,t] <- y1.sim[inds1[i],t]==1 # cannot observe y1=1
+      #y1.rep.one[i,t] <- y1.rep[inds1[i],t]==1
+    } # t
+    # Zeros per individual
+    n1.zero.sim[i] <- sum(y1.sim.zero[i,(f1[inds1[i]]+1):ff1[inds1[i]]]) 
+    n1.zero.rep[i] <- sum(y1.rep.zero[i,(f1[inds1[i]]+1):ff1[inds1[i]]]) 
+    # Ones per individual
+    #n1.one.sim[i] <- sum(y1.sim.one[i,(f1[inds1[i]]+1):ff1[inds1[i]]]) # cannot observe y1=1
+    #n1.one.rep[i] <- sum(y1.rep.one[i,(f1[inds1[i]]+1):ff1[inds1[i]]]) 
+  } # i
+  for (i in 1:nind2){
+    for (t in f2[inds2[i]]:ff2[inds2[i]]){	  
+      # Radio Telemetry Observation process: draw y(t) given z(t)  
+      y2[inds2[i],t] ~ dcat(P2[,z[inds2[i],t], i, t])   
+      y2.rep[inds2[i],t] ~ dcat(P2[,z[inds2[i],t], i, t])
+      y2.sim[inds2[i],t] ~ dcat(P2[,z.sim[inds2[i],t], i, t])  
+      # Targeted discrepancy	  
+	  y2.sim.zero[i,t] <- y2.sim[inds2[i],t]==3
+	  y2.rep.zero[i,t] <- y2.rep[inds2[i],t]==3
+	  y2.sim.one[i,t] <- y2.sim[inds2[i],t]==1
+	  y2.rep.one[i,t] <- y2.rep[inds2[i],t]==1
+    } # t
+    # Zeros per individual
+    n2.zero.sim[i] <- sum(y2.sim.zero[i,f2[inds2[i]]:ff2[inds2[i]]]) 
+    n2.zero.rep[i] <- sum(y2.rep.zero[i,f2[inds2[i]]:ff2[inds2[i]]]) 
+    # Ones per individual
+    n2.one.sim[i] <- sum(y2.sim.one[i,f2[inds2[i]]:ff2[inds2[i]]])
+    n2.one.rep[i] <- sum(y2.rep.one[i,f2[inds2[i]]:ff2[inds2[i]]]) 
+  } # i
+  for (i in 1:nind3){
+    for (t in f3[inds3[i]]:ff3[inds3[i]]){
+      # Acoustic Telemetry Observation process: draw y(t) given z(t)  
+      y3[inds3[i],t] ~ dcat(P3[,z[inds3[i],t], i, t]) 
+      y3.rep[inds3[i],t] ~ dcat(P3[,z[inds3[i],t], i, t])
+      y3.sim[inds3[i],t] ~ dcat(P3[,z.sim[inds3[i],t], i, t]) 
+      # Targeted discrepancy	  
+	  y3.sim.zero[i,t] <- y3.sim[inds3[i],t]==3
+	  y3.rep.zero[i,t] <- y3.rep[inds3[i],t]==3
+	  y3.sim.one[i,t] <- y3.sim[inds3[i],t]==1
+	  y3.rep.one[i,t] <- y3.rep[inds3[i],t]==1
+    } # t
+    # Zeros per individual
+    n3.zero.sim[i] <- sum(y3.sim.zero[i,f3[inds3[i]]:ff3[inds3[i]]]) 
+    n3.zero.rep[i] <- sum(y3.rep.zero[i,f3[inds3[i]]:ff3[inds3[i]]]) 
+    # Ones per individual
+    n3.one.sim[i] <- sum(y3.sim.one[i,f3[inds3[i]]:ff3[inds3[i]]])
+    n3.one.rep[i] <- sum(y3.rep.one[i,f3[inds3[i]]:ff3[inds3[i]]]) 
+  } # i
+  # Sum of zeros
+  T1zero.sim <- sum(n1.zero.sim) 
+  T1zero.rep <- sum(n1.zero.rep) 
+  T2zero.sim <- sum(n2.zero.sim) 
+  T2zero.rep <- sum(n2.zero.rep) 
+  T3zero.sim <- sum(n3.zero.sim) 
+  T3zero.rep <- sum(n3.zero.rep) 
+  # Sum of ones
+  #T1one.sim <- sum(n1.one.sim)  # cannot observe y1=1
+  #T1one.rep <- sum(n1.one.rep) 
+  T2one.sim <- sum(n2.one.sim) 
+  T2one.rep <- sum(n2.one.rep)
+  T3one.sim <- sum(n3.one.sim) 
+  T3one.rep <- sum(n3.one.rep) 
+
+  # -------------------------------------------------
+  # Derived quantities
+  # -------------------------------------------------
+
+  # monitor observed sex ratio (male:female)
+  nM <- sum(G)
+  nF <- sum((G==0))
+  PSR <- nM/nF
+
+  # Statistics derived from latent State
+
+  # What proportion of fish of each sex are in the z=1 state over time?
+  for (i in 1:nind){
+    for (t in 1:n.occasions){
+	  z.one[i,t] <- z[i,t]==1
+	  z.gt0[i,t] <- z[i,t]>0
+	}
+	for (t in 2:n.occasions){
+      f.z1[i,t] <- (G[i]==0) * (z.one[i,t])
+      m.z1[i,t] <- G[i] * (z.one[i,t]) 
+      f.gt0[i,t] <- (G[i]==0) * (z.gt0[i,t])
+      m.gt0[i,t] <- G[i] * (z.gt0[i,t]) 
+    } # t
+  } # i
+  for (t in 2:n.occasions){
+    nFt[t] <- sum(f.gt0[,t])
+    nMt[t] <- sum(m.gt0[,t])
+    p.f.z1[t] <- sum(f.z1[,t])/nFt[t]
+    p.m.z1[t] <- sum(m.z1[,t])/nMt[t]
+  }
+ 
+  # What are migration intervals under average conditions?   
+  # mean sex-specific transition probabilities
+  for (u in 1:2){
+    logit(PSI.male[u]) <- beta0[u] + beta1[u]
+    logit(PSI.female[u]) <- beta0[u] 
+  }
+  # probability of returning in 1 through 10 years
+  P.female.ret[1] <- 1-PSI.female[1] 
+  P.male.ret[1] <- 1-PSI.male[1] 
+  for (t in 2:10){
+    P.female.ret[t] <- PSI.female[1] * pow(1-PSI.female[2], t-2) * PSI.female[2]
+    P.male.ret[t] <- PSI.male[1] * pow(1-PSI.male[2], t-2)  * PSI.male[2]
+  }
+  # ...weighted by time
+  for (t in 1:10){
+    Pt.male.ret[t] <- P.male.ret[t] * t
+    Pt.female.ret[t] <- P.female.ret[t] * t
+  }
+  # average migration interval by sex (approximate)
+  barI.male <- sum(Pt.male.ret[])
+  barI.female <- sum(Pt.female.ret[])
+}
